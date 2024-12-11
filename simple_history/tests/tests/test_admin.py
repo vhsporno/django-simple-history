@@ -4,18 +4,25 @@ from unittest.mock import ANY, patch
 import django
 from django.contrib.admin import AdminSite
 from django.contrib.admin.utils import quote
+from django.contrib.admin.views.main import PAGE_VAR
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.test import TestCase
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
 from django.urls import reverse
+from django.utils.dateparse import parse_datetime
 from django.utils.encoding import force_str
 
 from simple_history.admin import SimpleHistoryAdmin
 from simple_history.models import HistoricalRecords
+from simple_history.template_utils import HistoricalRecordContextHelper
 from simple_history.tests.external.models import ExternalModelWithCustomUserIdField
-from simple_history.tests.tests.utils import middleware_override_settings
+from simple_history.tests.tests.utils import (
+    PermissionAction,
+    middleware_override_settings,
+)
 
 from ..models import (
     Book,
@@ -26,8 +33,10 @@ from ..models import (
     Employee,
     FileModel,
     Person,
+    Place,
     Planet,
     Poll,
+    PollWithManyToMany,
     State,
 )
 
@@ -48,7 +57,7 @@ def get_history_url(obj, history_index=None, site="admin"):
         )
     else:
         return reverse(
-            "{site}:{app}_{model}_history".format(site=site, app=app, model=model),
+            f"{site}:{app}_{model}_history",
             args=[quote(obj.pk)],
         )
 
@@ -56,12 +65,6 @@ def get_history_url(obj, history_index=None, site="admin"):
 class AdminSiteTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_superuser("user_login", "u@example.com", "pass")
-
-    def tearDown(self):
-        try:
-            del HistoricalRecords.context.request
-        except AttributeError:
-            pass
 
     def login(self, user=None, superuser=None):
         user = user or self.user
@@ -88,6 +91,169 @@ class AdminSiteTest(TestCase):
         self.assertContains(response, "Change reason")
         self.assertContains(response, "A random test reason")
         self.assertContains(response, self.user.username)
+
+    def test_history_list_contains_diff_changes(self):
+        self.login()
+        poll = Poll(question="why?", pub_date=today)
+        poll._history_user = self.user
+        poll.save()
+
+        poll_history_url = get_history_url(poll)
+        response = self.client.get(poll_history_url)
+        self.assertContains(response, "Changes")
+        # The poll hasn't had any of its fields changed after creation,
+        # so these values should not be present
+        self.assertNotContains(response, "Question:")
+        self.assertNotContains(response, "why?")
+        self.assertNotContains(response, "Date published:")
+
+        poll.question = "how?"
+        poll.save()
+        response = self.client.get(poll_history_url)
+        self.assertContains(response, "Question:")
+        self.assertContains(response, "why?")
+        self.assertContains(response, "how?")
+        self.assertNotContains(response, "Date published:")
+
+        poll.question = "when?"
+        poll.pub_date = parse_datetime("2024-04-04 04:04:04")
+        poll.save()
+        response = self.client.get(poll_history_url)
+        self.assertContains(response, "Question:")
+        self.assertContains(response, "why?")
+        self.assertContains(response, "how?")
+        self.assertContains(response, "when?")
+        self.assertContains(response, "Date published:")
+        self.assertContains(response, "2021-01-01 10:00:00")
+        self.assertContains(response, "2024-04-04 04:04:04")
+
+    def test_history_list_contains_diff_changes_for_foreign_key_fields(self):
+        self.login()
+        poll1 = Poll.objects.create(question="why?", pub_date=today)
+        poll1_pk = poll1.pk
+        poll2 = Poll.objects.create(question="how?", pub_date=today)
+        poll2_pk = poll2.pk
+        choice = Choice(poll=poll1, votes=1)
+        choice._history_user = self.user
+        choice.save()
+        choice_history_url = get_history_url(choice)
+
+        # Before changing the poll:
+        response = self.client.get(choice_history_url)
+        self.assertNotContains(response, "Poll:")
+        expected_old_poll = f"Poll object ({poll1_pk})"
+        self.assertNotContains(response, expected_old_poll)
+        expected_new_poll = f"Poll object ({poll2_pk})"
+        self.assertNotContains(response, expected_new_poll)
+
+        # After changing the poll:
+        choice.poll = poll2
+        choice.save()
+        response = self.client.get(choice_history_url)
+        self.assertContains(response, "Poll:")
+        self.assertContains(response, expected_old_poll)
+        self.assertContains(response, expected_new_poll)
+
+        # After deleting all polls:
+        Poll.objects.all().delete()
+        response = self.client.get(choice_history_url)
+        self.assertContains(response, "Poll:")
+        self.assertContains(response, f"Deleted poll (pk={poll1_pk})")
+        self.assertContains(response, f"Deleted poll (pk={poll2_pk})")
+
+    @patch(
+        # Test without the customization in PollWithManyToMany's admin class
+        "simple_history.tests.admin.HistoricalPollWithManyToManyContextHelper",
+        HistoricalRecordContextHelper,
+    )
+    def test_history_list_contains_diff_changes_for_m2m_fields(self):
+        self.login()
+        poll = PollWithManyToMany(question="why?", pub_date=today)
+        poll._history_user = self.user
+        poll.save()
+        place1 = Place.objects.create(name="Here")
+        place1_pk = place1.pk
+        place2 = Place.objects.create(name="There")
+        place2_pk = place2.pk
+        poll_history_url = get_history_url(poll)
+
+        # Before adding places:
+        response = self.client.get(poll_history_url)
+        self.assertNotContains(response, "Places:")
+        expected_old_places = "[]"
+        self.assertNotContains(response, expected_old_places)
+        expected_new_places = (
+            f"[Place object ({place1_pk}), Place object ({place2_pk})]"
+        )
+        self.assertNotContains(response, expected_new_places)
+
+        # After adding places:
+        poll.places.add(place1, place2)
+        response = self.client.get(poll_history_url)
+        self.assertContains(response, "Places:")
+        self.assertContains(response, expected_old_places)
+        self.assertContains(response, expected_new_places)
+
+        # After deleting all places:
+        Place.objects.all().delete()
+        response = self.client.get(poll_history_url)
+        self.assertContains(response, "Places:")
+        self.assertContains(response, expected_old_places)
+        expected_new_places = (
+            f"[Deleted place (pk={place1_pk}), Deleted place (pk={place2_pk})]"
+        )
+        self.assertContains(response, expected_new_places)
+
+    def test_history_list_doesnt_contain_too_long_diff_changes(self):
+        self.login()
+
+        def create_and_change_poll(*, initial_question, changed_question) -> Poll:
+            poll = Poll(question=initial_question, pub_date=today)
+            poll._history_user = self.user
+            poll.save()
+            poll.question = changed_question
+            poll.save()
+            return poll
+
+        repeated_chars = (
+            HistoricalRecordContextHelper.DEFAULT_MAX_DISPLAYED_DELTA_CHANGE_CHARS
+        )
+
+        # Number of characters right on the limit
+        poll1 = create_and_change_poll(
+            initial_question="A" * repeated_chars,
+            changed_question="B" * repeated_chars,
+        )
+        response = self.client.get(get_history_url(poll1))
+        self.assertContains(response, "Question:")
+        self.assertContains(response, "A" * repeated_chars)
+        self.assertContains(response, "B" * repeated_chars)
+
+        # Number of characters just over the limit
+        poll2 = create_and_change_poll(
+            initial_question="A" * (repeated_chars + 1),
+            changed_question="B" * (repeated_chars + 1),
+        )
+        response = self.client.get(get_history_url(poll2))
+        self.assertContains(response, "Question:")
+        self.assertContains(response, f"{'A' * 61}[35 chars]AAAAA")
+        self.assertContains(response, f"{'B' * 61}[35 chars]BBBBB")
+
+    def test_overriding__historical_record_context_helper__with_custom_m2m_string(self):
+        self.login()
+
+        place1 = Place.objects.create(name="Place 1")
+        place2 = Place.objects.create(name="Place 2")
+        place3 = Place.objects.create(name="Place 3")
+        poll = PollWithManyToMany.objects.create(question="why?", pub_date=today)
+        poll.places.add(place1, place2)
+        poll.places.set([place3])
+
+        response = self.client.get(get_history_url(poll))
+        self.assertContains(response, "Places:")
+        self.assertContains(response, "[]")
+        self.assertContains(response, "[<b>Place 1</b>, <b>Place 2</b>]")
+        self.assertContains(response, "[<b>Place 3</b>]")
 
     def test_history_list_custom_fields(self):
         model_name = self.user._meta.model_name
@@ -391,6 +557,125 @@ class AdminSiteTest(TestCase):
 
         self.assertEqual(response["Location"], "/awesome/url/")
 
+    def test_history_view_pagination(self):
+        """
+        Ensure the history_view handles pagination correctly.
+        The default history_list_per_page is 100 so page 2 should have 1 record.
+        """
+        # Create a Poll object and make more than 100 changes to ensure pagination
+        poll = Poll.objects.create(question="what?", pub_date=today)
+        for i in range(100):
+            poll.question = f"change_{i}"
+            poll.save()
+
+        # Verify that there are 100+1 (initial creation) historical records
+        self.assertEqual(poll.history.count(), 101)
+
+        admin_site = AdminSite()
+        admin = SimpleHistoryAdmin(Poll, admin_site)
+
+        self.login(superuser=True)
+
+        # Simulate a request to the second page
+        request = RequestFactory().get("/", {PAGE_VAR: "2"})
+        request.user = self.user
+
+        # Patch the render function
+        with patch("simple_history.admin.render") as mock_render:
+            admin.history_view(request, str(poll.id))
+
+            # Ensure the render function was called
+            self.assertTrue(mock_render.called)
+
+            # Extract context passed to render function
+            action_list_count = len(mock_render.call_args[0][2]["page_obj"].object_list)
+
+            # Check if only 1 (101 - 100 from the first page)
+            # objects are present in the context
+            self.assertEqual(action_list_count, 1)
+
+    def test_history_view_pagination_no_pagination(self):
+        """
+        When all records fit on one page because the history_list_per_page is
+        higher than the number of records, ensure that the pagination is not set.
+        But it should show the number of entries.
+        """
+        # Create a Poll object and make more than 50 changes to ensure pagination
+        poll = Poll.objects.create(question="what?", pub_date=today)
+        for i in range(60):
+            poll.question = f"change_{i}"
+            poll.save()
+
+        # Verify that there are 60+1 (initial creation) historical records
+        self.assertEqual(poll.history.count(), 61)
+
+        # Create an admin with more per page than the number of records
+        class CustomSimpleHistoryAdmin(SimpleHistoryAdmin):
+            history_list_per_page = 200
+
+        admin_site = AdminSite()
+        admin = CustomSimpleHistoryAdmin(Poll, admin_site)
+
+        self.login(superuser=True)
+
+        # Simulate a request to the second page
+        request = RequestFactory().get("/", {PAGE_VAR: "2"})
+        request.user = self.user
+
+        response = admin.history_view(request, str(poll.id))
+
+        expected = '<p class="paginator" style="border-top: 0">61 entries</p>'
+        self.assertInHTML(expected, response.content.decode())
+
+    def test_history_view_pagination_last_page(self):
+        """
+        With 31 records, the last page should have 1 record. Non-existing pages
+        also end up on the last page.
+        """
+        # Create a Poll object and make more than 30 changes to ensure pagination
+        poll = Poll.objects.create(question="what?", pub_date=today)
+        for i in range(30):
+            poll.question = f"change_{i}"
+            poll.save()
+
+        expected_entry_count = 31
+
+        # Verify that there are 30+1 (initial creation) historical records
+        self.assertEqual(poll.history.count(), expected_entry_count)
+
+        # Create an admin with less per page than the number of records
+        class CustomSimpleHistoryAdmin(SimpleHistoryAdmin):
+            history_list_per_page = 10
+
+        admin_site = AdminSite()
+        admin = CustomSimpleHistoryAdmin(Poll, admin_site)
+
+        self.login(superuser=True)
+
+        # Simulate a request to the 4th and last page
+        request = RequestFactory().get("/", {PAGE_VAR: "4"})
+        request.user = self.user
+
+        response = admin.history_view(request, str(poll.id))
+
+        expected = (
+            '<p class="paginator" style="border-top: 0">'
+            '<a href="?p=1" >1</a>'
+            '<a href="?p=2" >2</a>'
+            '<a href="?p=3" >3</a>'
+            '<span class="this-page">4</span>'
+            f"{expected_entry_count} entries"
+            "</p>"
+        )
+        self.assertInHTML(expected, response.content.decode())
+
+        # Also a non-existent page should return the last page
+        request = RequestFactory().get("/", {PAGE_VAR: "5"})
+        request.user = self.user
+
+        response = admin.history_view(request, str(poll.id))
+        self.assertInHTML(expected, response.content.decode())
+
     def test_response_change_change_history_setting_off(self):
         """
         Test the response_change method that it works with a _change_history
@@ -410,7 +695,7 @@ class AdminSiteTest(TestCase):
         admin_site = AdminSite()
         admin = SimpleHistoryAdmin(Poll, admin_site)
 
-        response = admin.response_change(request, poll)
+        admin.response_change(request, poll)
 
         with patch("simple_history.admin.admin.ModelAdmin.response_change") as m_admin:
             m_admin.return_value = "it was called"
@@ -455,7 +740,9 @@ class AdminSiteTest(TestCase):
             admin.history_form_view(request, poll.id, history.pk)
 
         context = {
+            **admin_site.each_context(request),
             # Verify this is set for original object
+            "log_entries": ANY,
             "original": poll,
             "change_history": False,
             "title": "Revert %s" % force_str(poll),
@@ -468,13 +755,14 @@ class AdminSiteTest(TestCase):
             "original_opts": ANY,
             "changelist_url": "/admin/tests/poll/",
             "change_url": ANY,
-            "history_url": "/admin/tests/poll/{}/history/".format(poll.id),
+            "history_url": f"/admin/tests/poll/{poll.id}/history/",
             "add": False,
             "change": True,
             "has_add_permission": admin.has_add_permission(request),
-            "has_change_permission": admin.has_change_permission(request, poll),
+            "has_view_permission": admin.has_view_history_permission(request, poll),
+            "has_change_permission": admin.has_change_history_permission(request, poll),
             "has_delete_permission": admin.has_delete_permission(request, poll),
-            "revert_disabled": admin.revert_disabled,
+            "revert_disabled": admin.revert_disabled(request, poll),
             "has_file_field": True,
             "has_absolute_url": False,
             "form_url": "",
@@ -484,7 +772,10 @@ class AdminSiteTest(TestCase):
             "save_on_top": admin.save_on_top,
             "root_path": getattr(admin_site, "root_path", None),
         }
-        context.update(admin_site.each_context(request))
+        # DEV: Remove this when support for Django 4.2 has been dropped
+        if django.VERSION < (5, 0):
+            del context["log_entries"]
+
         mock_render.assert_called_once_with(
             request, admin.object_history_form_template, context
         )
@@ -509,7 +800,9 @@ class AdminSiteTest(TestCase):
                 admin.history_form_view(request, poll.id, history.pk)
 
         context = {
+            **admin_site.each_context(request),
             # Verify this is set for history object not poll object
+            "log_entries": ANY,
             "original": history.instance,
             "change_history": True,
             "title": "Revert %s" % force_str(history.instance),
@@ -522,13 +815,14 @@ class AdminSiteTest(TestCase):
             "original_opts": ANY,
             "changelist_url": "/admin/tests/poll/",
             "change_url": ANY,
-            "history_url": "/admin/tests/poll/{pk}/history/".format(pk=poll.pk),
+            "history_url": f"/admin/tests/poll/{poll.pk}/history/",
             "add": False,
             "change": True,
             "has_add_permission": admin.has_add_permission(request),
-            "has_change_permission": admin.has_change_permission(request, poll),
+            "has_view_permission": admin.has_view_history_permission(request, poll),
+            "has_change_permission": admin.has_change_history_permission(request, poll),
             "has_delete_permission": admin.has_delete_permission(request, poll),
-            "revert_disabled": admin.revert_disabled,
+            "revert_disabled": admin.revert_disabled(request, poll),
             "has_file_field": True,
             "has_absolute_url": False,
             "form_url": "",
@@ -538,7 +832,10 @@ class AdminSiteTest(TestCase):
             "save_on_top": admin.save_on_top,
             "root_path": getattr(admin_site, "root_path", None),
         }
-        context.update(admin_site.each_context(request))
+        # DEV: Remove this when support for Django 4.2 has been dropped
+        if django.VERSION < (5, 0):
+            del context["log_entries"]
+
         mock_render.assert_called_once_with(
             request, admin.object_history_form_template, context
         )
@@ -563,7 +860,9 @@ class AdminSiteTest(TestCase):
                 admin.history_form_view(request, poll.id, history.pk)
 
         context = {
+            **admin_site.each_context(request),
             # Verify this is set for history object not poll object
+            "log_entries": ANY,
             "original": poll,
             "change_history": False,
             "title": "Revert %s" % force_str(poll),
@@ -576,13 +875,14 @@ class AdminSiteTest(TestCase):
             "original_opts": ANY,
             "changelist_url": "/admin/tests/poll/",
             "change_url": ANY,
-            "history_url": "/admin/tests/poll/{}/history/".format(poll.id),
+            "history_url": f"/admin/tests/poll/{poll.id}/history/",
             "add": False,
             "change": True,
             "has_add_permission": admin.has_add_permission(request),
-            "has_change_permission": admin.has_change_permission(request, poll),
+            "has_view_permission": admin.has_view_history_permission(request, poll),
+            "has_change_permission": admin.has_change_history_permission(request, poll),
             "has_delete_permission": admin.has_delete_permission(request, poll),
-            "revert_disabled": admin.revert_disabled,
+            "revert_disabled": admin.revert_disabled(request, poll),
             "has_file_field": True,
             "has_absolute_url": False,
             "form_url": "",
@@ -592,7 +892,10 @@ class AdminSiteTest(TestCase):
             "save_on_top": admin.save_on_top,
             "root_path": getattr(admin_site, "root_path", None),
         }
-        context.update(admin_site.each_context(request))
+        # DEV: Remove this when support for Django 4.2 has been dropped
+        if django.VERSION < (5, 0):
+            del context["log_entries"]
+
         mock_render.assert_called_once_with(
             request, admin.object_history_form_template, context
         )
@@ -617,7 +920,9 @@ class AdminSiteTest(TestCase):
                 admin.history_form_view(request, obj.id, history.pk)
 
         context = {
+            **admin_site.each_context(request),
             # Verify this is set for history object
+            "log_entries": ANY,
             "original": history.instance,
             "change_history": True,
             "title": "Revert %s" % force_str(history.instance),
@@ -636,9 +941,10 @@ class AdminSiteTest(TestCase):
             "add": False,
             "change": True,
             "has_add_permission": admin.has_add_permission(request),
-            "has_change_permission": admin.has_change_permission(request, obj),
+            "has_view_permission": admin.has_view_history_permission(request, obj),
+            "has_change_permission": admin.has_change_history_permission(request, obj),
             "has_delete_permission": admin.has_delete_permission(request, obj),
-            "revert_disabled": admin.revert_disabled,
+            "revert_disabled": admin.revert_disabled(request, obj),
             "has_file_field": True,
             "has_absolute_url": False,
             "form_url": "",
@@ -648,7 +954,10 @@ class AdminSiteTest(TestCase):
             "save_on_top": admin.save_on_top,
             "root_path": getattr(admin_site, "root_path", None),
         }
-        context.update(admin_site.each_context(request))
+        # DEV: Remove this when support for Django 4.2 has been dropped
+        if django.VERSION < (5, 0):
+            del context["log_entries"]
+
         mock_render.assert_called_once_with(
             request, admin.object_history_form_template, context
         )
@@ -676,7 +985,9 @@ class AdminSiteTest(TestCase):
             )
 
         context = {
+            **admin_site.each_context(request),
             # Verify this is set for original object
+            "log_entries": ANY,
             "anything_else": "will be merged into context",
             "original": poll,
             "change_history": False,
@@ -690,13 +1001,14 @@ class AdminSiteTest(TestCase):
             "original_opts": ANY,
             "changelist_url": "/admin/tests/poll/",
             "change_url": ANY,
-            "history_url": "/admin/tests/poll/{}/history/".format(poll.id),
+            "history_url": f"/admin/tests/poll/{poll.id}/history/",
             "add": False,
             "change": True,
             "has_add_permission": admin.has_add_permission(request),
-            "has_change_permission": admin.has_change_permission(request, poll),
+            "has_view_permission": admin.has_view_history_permission(request, poll),
+            "has_change_permission": admin.has_change_history_permission(request, poll),
             "has_delete_permission": admin.has_delete_permission(request, poll),
-            "revert_disabled": admin.revert_disabled,
+            "revert_disabled": admin.revert_disabled(request, poll),
             "has_file_field": True,
             "has_absolute_url": False,
             "form_url": "",
@@ -706,32 +1018,52 @@ class AdminSiteTest(TestCase):
             "save_on_top": admin.save_on_top,
             "root_path": getattr(admin_site, "root_path", None),
         }
-        context.update(admin_site.each_context(request))
+        # DEV: Remove this when support for Django 4.2 has been dropped
+        if django.VERSION < (5, 0):
+            del context["log_entries"]
+
         mock_render.assert_called_once_with(
             request, admin.object_history_form_template, context
         )
 
-    def test_history_view__title_suggests_revert_by_default(self):
-        self.login()
+    def assert_history_view_response_contains(
+        self, user=None, *, title_prefix: PermissionAction, choose_date: bool
+    ):
+        user = user or self.user
+        user = User.objects.get(pk=user.pk)  # refresh perms cache
+        self.login(user)
         planet = Planet.objects.create(star="Sun")
         response = self.client.get(get_history_url(planet))
-        self.assertContains(response, "Change history: Sun")
+        self.assertEqual(response.status_code, 200)
+        # `count=None` means at least once
+        self.assertContains(
+            response,
+            "Change history: Sun",
+            count=None if title_prefix == PermissionAction.CHANGE else 0,
+        )
+        self.assertContains(
+            response,
+            "View history: Sun",
+            count=None if title_prefix == PermissionAction.VIEW else 0,
+        )
+        self.assertContains(response, "Choose a date", count=None if choose_date else 0)
+
+    def test_history_view__title_suggests_revert_by_default(self):
+        self.assert_history_view_response_contains(
+            title_prefix=PermissionAction.CHANGE, choose_date=True
+        )
 
     @override_settings(SIMPLE_HISTORY_REVERT_DISABLED=False)
     def test_history_view__title_suggests_revert(self):
-        self.login()
-        planet = Planet.objects.create(star="Sun")
-        response = self.client.get(get_history_url(planet))
-        self.assertContains(response, "Change history: Sun")
-        self.assertContains(response, "Choose a date")
+        self.assert_history_view_response_contains(
+            title_prefix=PermissionAction.CHANGE, choose_date=True
+        )
 
     @override_settings(SIMPLE_HISTORY_REVERT_DISABLED=True)
     def test_history_view__title_suggests_view_only(self):
-        self.login()
-        planet = Planet.objects.create(star="Sun")
-        response = self.client.get(get_history_url(planet))
-        self.assertContains(response, "View history: Sun")
-        self.assertNotContains(response, "Choose a date")
+        self.assert_history_view_response_contains(
+            title_prefix=PermissionAction.VIEW, choose_date=False
+        )
 
     def test_history_form_view__shows_revert_button_by_default(self):
         self.login()
@@ -755,6 +1087,143 @@ class AdminSiteTest(TestCase):
         self.login()
         planet = Planet.objects.create(star="Sun")
         response = self.client.get(get_history_url(planet, 0))
+        self.assertNotContains(response, "Revert")
         self.assertContains(response, "View Planet")
         self.assertContains(response, "View Sun")
-        self.assertNotContains(response, "Revert")
+
+    def _test_history_view_response_text_with_revert_disabled(self, *, disabled):
+        user = User.objects.create(username="astronomer", is_staff=True, is_active=True)
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_planet"),
+            Permission.objects.get(codename="view_historicalplanet"),
+        )
+        self.assert_history_view_response_contains(
+            user, title_prefix=PermissionAction.VIEW, choose_date=False
+        )
+
+        user.user_permissions.clear()
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_planet"),
+            Permission.objects.get(codename="change_planet"),
+        )
+        self.assert_history_view_response_contains(
+            user,
+            title_prefix=PermissionAction.VIEW if disabled else PermissionAction.CHANGE,
+            choose_date=not disabled,
+        )
+
+    @override_settings(SIMPLE_HISTORY_REVERT_DISABLED=True)
+    def test_history_view_response_text__revert_disabled(self):
+        self._test_history_view_response_text_with_revert_disabled(disabled=True)
+
+    def test_history_view_response_text__revert_enabled(self):
+        self._test_history_view_response_text_with_revert_disabled(disabled=False)
+
+    @override_settings(SIMPLE_HISTORY_ENFORCE_HISTORY_MODEL_PERMISSIONS=True)
+    def test_history_form_view__no_perms_enforce_history_permissions(self):
+        user = User.objects.create(username="astronomer", is_staff=True, is_active=True)
+        user = User.objects.get(pk=user.pk)  # refresh perms cache
+        self.client.force_login(user)
+        planet = Planet.objects.create(star="Sun")
+        response = self.client.get(get_history_url(planet, 0))
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(SIMPLE_HISTORY_ENFORCE_HISTORY_MODEL_PERMISSIONS=True)
+    def test_history_view__no_perms_enforce_history_permissions(self):
+        user = User.objects.create(username="astronomer", is_staff=True, is_active=True)
+        user = User.objects.get(pk=user.pk)  # refresh perms cache
+        self.client.force_login(user)
+        planet = Planet.objects.create(star="Sun")
+        resp = self.client.get(get_history_url(planet))
+        self.assertEqual(resp.status_code, 403)
+
+    @override_settings(
+        SIMPLE_HISTORY_REVERT_DISABLED=True,
+        SIMPLE_HISTORY_ENFORCE_HISTORY_MODEL_PERMISSIONS=True,
+    )
+    def test_history_view__enforce_history_permissions_and_revert_enabled(self):
+        user = User.objects.create(username="astronomer", is_staff=True, is_active=True)
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_historicalplanet"),
+        )
+        self.assert_history_view_response_contains(
+            user, title_prefix=PermissionAction.VIEW, choose_date=False
+        )
+
+    def _test_permission_combos_with_enforce_history_permissions(self, *, enforced):
+        user = User.objects.create(username="astronomer", is_staff=True, is_active=True)
+
+        def get_request(usr):
+            usr = User.objects.get(pk=usr.pk)  # refresh perms cache
+            req = RequestFactory().post("/")
+            req.session = "session"
+            req._messages = FallbackStorage(req)
+            req.user = usr
+            return req
+
+        admin_site = AdminSite()
+        admin = SimpleHistoryAdmin(Planet, admin_site)
+
+        # no perms
+        request = get_request(user)
+        self.assertFalse(admin.has_view_permission(request))
+        self.assertFalse(admin.has_change_permission(request))
+        self.assertFalse(admin.has_view_history_permission(request))
+        self.assertFalse(admin.has_change_history_permission(request))
+
+        # has concrete view/change only -> view_historical is false
+        user.user_permissions.clear()
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_planet"),
+            Permission.objects.get(codename="change_planet"),
+        )
+        request = get_request(user)
+        self.assertTrue(admin.has_view_permission(request))
+        self.assertTrue(admin.has_change_permission(request))
+        self.assertEqual(admin.has_view_history_permission(request), not enforced)
+        self.assertEqual(admin.has_change_history_permission(request), not enforced)
+
+        # has concrete view/change and historical change -> view_history is false
+        user.user_permissions.clear()
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_planet"),
+            Permission.objects.get(codename="change_planet"),
+            Permission.objects.get(codename="change_historicalplanet"),
+        )
+        request = get_request(user)
+        self.assertTrue(admin.has_view_permission(request))
+        self.assertTrue(admin.has_change_permission(request))
+        self.assertEqual(admin.has_view_history_permission(request), not enforced)
+        self.assertTrue(admin.has_change_history_permission(request))
+
+        # has concrete view/change and historical view/change -> view_history is true
+        user.user_permissions.clear()
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_planet"),
+            Permission.objects.get(codename="change_planet"),
+            Permission.objects.get(codename="view_historicalplanet"),
+            Permission.objects.get(codename="change_historicalplanet"),
+        )
+        request = get_request(user)
+        self.assertTrue(admin.has_view_permission(request))
+        self.assertTrue(admin.has_change_permission(request))
+        self.assertTrue(admin.has_view_history_permission(request))
+        self.assertTrue(admin.has_change_history_permission(request))
+
+        # has historical view only -> view_history is true
+        user.user_permissions.clear()
+        user.user_permissions.add(
+            Permission.objects.get(codename="view_historicalplanet"),
+        )
+        request = get_request(user)
+        self.assertFalse(admin.has_view_permission(request))
+        self.assertFalse(admin.has_change_permission(request))
+        self.assertEqual(admin.has_view_history_permission(request), enforced)
+        self.assertFalse(admin.has_change_history_permission(request))
+
+    @override_settings(SIMPLE_HISTORY_ENFORCE_HISTORY_MODEL_PERMISSIONS=True)
+    def test_permission_combos__enforce_history_permissions(self):
+        self._test_permission_combos_with_enforce_history_permissions(enforced=True)
+
+    def test_permission_combos__default(self):
+        self._test_permission_combos_with_enforce_history_permissions(enforced=False)

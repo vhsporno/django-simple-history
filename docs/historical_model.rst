@@ -52,7 +52,7 @@ You're able to set a custom ``history_date`` attribute for the historical
 record, by defining the property ``_history_date`` in your model. That's
 helpful if you want to add versions to your model, which happened before the
 current model version, e.g. when batch importing historical data. The content
-of the property ``_history_date`` has to be a datetime-object, but setting the
+of the property ``_history_date`` has to be a ``datetime``-object, but setting the
 value of the property to a ``DateTimeField``, which is already defined in the
 model, will work too.
 
@@ -177,6 +177,77 @@ If the app the models are defined in is `yoda` then the corresponding history ta
 
 IMPORTANT: Setting `custom_model_name` to `lambda x:f'{x}'` is not permitted.
            An error will be generated and no history model created if they are the same.
+
+
+Custom History Manager and Historical QuerySets
+-----------------------------------------------
+
+To manipulate the history ``Manager`` or the historical ``QuerySet`` of
+``HistoricalRecords``, you can specify the ``history_manager`` and
+``historical_queryset`` options. The values must be subclasses
+of ``simple_history.manager.HistoryManager`` and
+``simple_history.manager.HistoricalQuerySet``, respectively.
+
+Keep in mind, you can use either or both of these options. To understand the
+difference between a ``Manager`` and a ``QuerySet``,
+see `Django's Manager documentation`_.
+
+.. code-block:: python
+
+    from datetime import timedelta
+    from django.db import models
+    from django.utils import timezone
+    from simple_history.manager import HistoryManager, HistoricalQuerySet
+    from simple_history.models import HistoricalRecords
+
+
+    class HistoryQuestionManager(HistoryManager):
+        def published(self):
+            return self.filter(pub_date__lte=timezone.now())
+
+
+    class HistoryQuestionQuerySet(HistoricalQuerySet):
+        def question_prefixed(self):
+            return self.filter(question__startswith="Question: ")
+
+
+    class Question(models.Model):
+        pub_date = models.DateTimeField("date published")
+        history = HistoricalRecords(
+            history_manager=HistoryQuestionManager,
+            historical_queryset=HistoryQuestionQuerySet,
+        )
+
+    # This is now possible:
+    queryset = Question.history.published().question_prefixed()
+
+
+To reuse a ``QuerySet`` from the model, see the following code example:
+
+.. code-block:: python
+
+    from datetime import timedelta
+    from django.db import models
+    from django.utils import timezone
+    from simple_history.models import HistoricalRecords
+    from simple_history.manager import HistoryManager, HistoricalQuerySet
+
+
+    class QuestionQuerySet(models.QuerySet):
+        def question_prefixed(self):
+            return self.filter(question__startswith="Question: ")
+
+
+    class HistoryQuestionQuerySet(QuestionQuerySet, HistoricalQuerySet):
+        """Redefine ``QuerySet`` with base class ``HistoricalQuerySet``."""
+
+
+    class Question(models.Model):
+        pub_date = models.DateTimeField("date published")
+        history = HistoricalRecords(historical_queryset=HistoryQuestionQuerySet)
+        manager = QuestionQuerySet.as_manager()
+
+.. _Django's Manager documentation: https://docs.djangoproject.com/en/stable/topics/db/managers/
 
 
 TextField as `history_change_reason`
@@ -307,8 +378,8 @@ Change Reason
 Change reason is a message to explain why the change was made in the instance. It is stored in the
 field ``history_change_reason`` and its default value is ``None``.
 
-By default, the django-simple-history gets the change reason in the field ``_change_reason`` of the instance. Also, is possible to pass
-the ``_change_reason`` explicitly. For this, after a save or delete in an instance, is necessary call the
+By default, the django-simple-history gets the change reason in the field ``_change_reason`` of the instance. Also, it is possible to pass
+the ``_change_reason`` explicitly. For this, after a save or delete in an instance, it is necessary to call the
 function ``utils.update_change_reason``. The first argument of this function is the instance and the second
 is the message that represents the change reason.
 
@@ -361,7 +432,7 @@ Allow tracking to be inherited
 
 By default history tracking is only added for the model that is passed
 to ``register()`` or has the ``HistoricalRecords`` descriptor. By
-passing ``inherit=True`` to either way of registering you can change
+passing ``inherit=True`` to either way of registering, you can change
 that behavior so that any child model inheriting from it will have
 historical tracking as well. Be careful though, in cases where a model
 can be tracked more than once, ``MultipleRegistrationsError`` will be
@@ -383,6 +454,9 @@ raised.
 
 Both ``User`` and ``Poll`` in the example above will cause any model
 inheriting from them to have historical tracking as well.
+
+**Note:** For parent models having a ``HistoricalRecords`` field with ``inherit=True``
+*and* a ``table_name``, the latter option will not be inherited by child models.
 
 History Model In Different App
 ------------------------------
@@ -419,3 +493,76 @@ compatibility; it is more correct for a ``FileField`` to be converted to a
 
     SIMPLE_HISTORY_FILEFIELD_TO_CHARFIELD = True
 
+
+Drop Database Indices
+--------------------------------
+
+It is possible to use the parameter ``no_db_index`` to choose which fields
+that will not create a database index.
+
+For example, if you have the model:
+
+.. code-block:: python
+
+    class PollWithExcludeFields(models.Model):
+        question = models.CharField(max_length=200, db_index=True)
+
+
+
+And you don't want to create database index for ``question``, it is necessary to update the model to:
+
+.. code-block:: python
+
+    class PollWithExcludeFields(models.Model):
+        question = models.CharField(max_length=200, db_index=True)
+
+        history = HistoricalRecords(no_db_index=['question'])
+
+
+By default, django-simple-history keeps all indices. and even forces them on unique fields and relations.
+WARNING: This will drop performance on historical lookups
+
+Tracking many to many relationships
+-----------------------------------
+By default, many to many fields are ignored when tracking changes.
+If you want to track many to many relationships, you need to define them explicitly:
+
+.. code-block:: python
+
+    class Category(models.Model):
+        name = models.CharField(max_length=200)
+
+    class Poll(models.Model):
+        question = models.CharField(max_length=200)
+        categories = models.ManyToManyField(Category)
+        history = HistoricalRecords(m2m_fields=[categories])
+
+This will create a historical intermediate model that tracks each relational change
+between `Poll` and `Category`.
+
+You may use either the name of the field or the field instance itself.
+
+You may also define these fields in a class attribute (by default on `_history_m2m_fields`).
+This is mainly used by inherited models not declaring their own `HistoricalRecord`.
+You can override the attribute name by setting your own `m2m_fields_model_field_name`
+argument on the `HistoricalRecord` instance.
+
+You will see the many to many changes when diffing between two historical records:
+
+.. code-block:: python
+
+    informal = Category.objects.create(name="informal questions")
+    official = Category.objects.create(name="official questions")
+    p = Poll.objects.create(question="what's up?")
+    p.categories.add(informal, official)
+    p.categories.remove(informal)
+
+    last_record = p.history.latest()
+    previous_record = last_record.prev_record
+    delta = last_record.diff_against(previous_record)
+
+    for change in delta.changes:
+        print("{} changed from {} to {}".format(change.field, change.old, change.new))
+
+    # Output:
+    # categories changed from [{'poll': 1, 'category': 1}, { 'poll': 1, 'category': 2}] to [{'poll': 1, 'category': 2}]

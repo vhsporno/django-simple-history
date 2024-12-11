@@ -24,7 +24,7 @@ class Command(BaseCommand):
     INVALID_MODEL_ARG = "An invalid model was specified"
 
     def add_arguments(self, parser):
-        super(Command, self).add_arguments(parser)
+        super().add_arguments(parser)
         parser.add_argument("models", nargs="*", type=str)
         parser.add_argument(
             "--auto",
@@ -82,7 +82,7 @@ class Command(BaseCommand):
                 model, history = self._model_from_natural_key(natural_key)
             except ValueError as e:
                 failing = True
-                self.stderr.write("{error}\n".format(error=e))
+                self.stderr.write(f"{e}\n")
             else:
                 if not failing:
                     yield (model, history)
@@ -100,12 +100,12 @@ class Command(BaseCommand):
             except LookupError:
                 model = None
         if not model:
-            msg = self.MODEL_NOT_FOUND + " < {model} >\n".format(model=natural_key)
+            msg = self.MODEL_NOT_FOUND + f" < {natural_key} >\n"
             raise ValueError(msg)
         try:
             history_model = utils.get_history_model_for_model(model)
         except NotHistoricalModelError:
-            msg = self.MODEL_NOT_HISTORICAL + " < {model} >\n".format(model=natural_key)
+            msg = self.MODEL_NOT_HISTORICAL + f" < {natural_key} >\n"
             raise ValueError(msg)
         return model, history_model
 
@@ -135,7 +135,6 @@ class Command(BaseCommand):
             # creating them. So we only keep batch_size worth of models in
             # historical_instances and clear them after we hit batch_size
             if index % batch_size == 0:
-
                 history.bulk_history_create(instances, batch_size=batch_size)
 
                 instances = []
@@ -156,7 +155,7 @@ class Command(BaseCommand):
 
     def _process(self, to_process, batch_size):
         for model, history_model in to_process:
-            if history_model.objects.count():
+            if history_model.objects.exists():
                 self.stderr.write(
                     "{msg} {model}\n".format(
                         msg=self.EXISTING_HISTORY_FOUND, model=model

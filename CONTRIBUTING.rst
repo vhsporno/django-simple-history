@@ -75,7 +75,7 @@ We make use of `black`_ for code formatting.
 
 .. _black: https://black.readthedocs.io/en/stable/installation_and_usage.html
 
-You can install and run it along with other linters through pre-commit:
+You can install and run it along with other linters through pre-commit::
 
     pre-commit install
     pre-commit run
@@ -97,4 +97,4 @@ steps:
 4. Compile these with ``django-admin compilemessages``.
 5. Commit and publish your translations as described above.
 
-.. _translation docs: https://docs.djangoproject.com/en/dev/topics/i18n/translation/#localization-how-to-create-language-files
+.. _translation docs: https://docs.djangoproject.com/en/stable/topics/i18n/translation/#localization-how-to-create-language-files

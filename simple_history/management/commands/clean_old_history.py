@@ -53,7 +53,6 @@ class Command(populate_history.Command):
         self._process(to_process, days_back=options["days"], dry_run=options["dry"])
 
     def _process(self, to_process, days_back=None, dry_run=True):
-
         start_date = timezone.now() - timezone.timedelta(days=days_back)
         for model, history_model in to_process:
             history_model_manager = history_model.objects
@@ -61,7 +60,7 @@ class Command(populate_history.Command):
                 history_date__lt=start_date
             )
             found = history_model_manager.count()
-            self.log("{0} has {1} old historical entries".format(model, found), 2)
+            self.log(f"{model} has {found} old historical entries", 2)
             if not found:
                 continue
             if not dry_run:

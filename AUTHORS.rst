@@ -15,15 +15,21 @@ Authors
 - Aleksey Kladov
 - Alexander Anikeev
 - Amanda Ng (`AmandaCLNg <https://github.com/AmandaCLNg>`_)
+- Amartis Gladius (`Amartis <https://github.com/amartis>`_)
+- Anton Kulikov (`bigtimecriminal <https://github.com/bigtimecriminal>`_)
 - Ben Lawson (`blawson <https://github.com/blawson>`_)
 - Benjamin Mampaey (`bmampaey <https://github.com/bmampaey>`_)
+- Berke Agababaoglu (`bagababaoglu <https://github.com/bagababaoglu>`_)
+- Bheesham Persaud (`bheesham <https://github.com/bheesham>`_)
 - `bradford281 <https://github.com/bradford281>`_
 - Brian Armstrong (`barm <https://github.com/barm>`_)
-- Buddy Lindsey, Jr.
 - Brian Dixon
+- Brian Mesick (`bmedx <https://github.com/bmedx>`_)
+- Buddy Lindsey, Jr.
 - Carlos San Emeterio (`Carlos-San-Emeterio <https://github.com/Carlos-San-Emeterio>`_)
 - Christopher Broderick (`uhurusurfa <https://github.com/uhurusurfa>`_)
 - Christopher Johns (`tyrantwave <https://github.com/tyrantwave>`_)
+- Conrad (`creyD <https://github.com/creyD>`_)
 - Corey Bertram
 - Craig Maloney (`craigmaloney <https://github.com/craigmaloney>`_)
 - Damien Nozay
@@ -33,10 +39,13 @@ Authors
 - Daniil Skrobov (`yetanotherape <https://github.com/yetanotherape>`_)
 - David Grochowski (`ThePumpingLemma <https://github.com/ThePumpingLemma>`_)
 - David Hite
+- David Smith
+- `ddabble <https://github.com/ddabble>`_
 - Dmytro Shyshov (`xahgmah <https://github.com/xahgmah>`_)
 - Edouard Richard (`vied12 <https://github.com/vied12>` _)
 - Eduardo Cuducos
 - Erik van Widenfelt (`erikvw <https://github.com/erikvw>`_)
+- Fábio Capuano (`fabiocapsouza <https://github.com/fabiocapsouza`_)
 - Filipe Pina (@fopina)
 - Florian Eßer
 - François Martin (`martinfrancois <https://github.com/martinfrancois>`_)
@@ -47,13 +56,17 @@ Authors
 - Grzegorz Bialy
 - Guillermo Eijo (`guilleijo <https://github.com/guilleijo>`_)
 - Hamish Downer
+- Hans de Jong (`sult <https://github.com/sult>`_)
 - Hanyin Zhang
+- Héctor Durán (`hector97i <https://github.com/hector97i>`)
 - Hernan Esteves (`sevetseh28 <https://github.com/sevetseh28>`_)
 - Hielke Walinga (`hwalinga <https://github.com/hwalinga>`_)
+- Hugo van Kemenade (`hugovk <https://github.com/hugovk>`_)
 - Jack Cushman (`jcushman <https://github.com/jcushman>`_)
 - Jake Howard (`RealOrangeOne <https://github.com/realorangeone>`_)
 - James Muranga (`jamesmura <https://github.com/jamesmura>`_)
 - James Pulec
+- Jeppe Fihl-Pearson (`Tenzer <https://github.com/Tenzer>`_)
 - Jesse Shapiro
 - Jihoon Baek (`jihoon796 <https://github.com/jihoon796>`_)
 - Jim Gomez
@@ -66,30 +79,40 @@ Authors
 - Jonathan Loo (`alpha1d3d <https://github.com/alpha1d3d>`_)
 - Jonathan Sanchez
 - Jonathan Zvesper (`zvesp <https://github.com/zvesp>`_)
-- Jordon Wing  (`jordonwii <https://github.com/jordonwii`_)
+- Jordan Hyatt (`JordanHyatt <https://github.com/JordanHyatt>`_)
+- Jordon Wing  (`jordonwii <https://github.com/jordonwii>`_)
 - Josh Fyne
+- Josh Thomas (`joshuadavidthomas <https://github.com/joshuadavidthomas>`_)
+- Jurrian Tromp (`jurrian <https://github.com/jurrian>`_)
 - Keith Hackbarth
 - Kevin Foster
+- Kira (`kiraware <https://github.com/kiraware>`_)
 - Klaas van Schelven
 - Kris Neuharth
 - Kyle Seever (`kseever <https://github.com/kseever>`_)
+- Léni Gauffier (`legau <https://github.com/legau>`_)
 - Leticia Portella
 - Lucas Wiman
 - Maciej "RooTer" Urbański
 - Marcelo Canina (`marcanuy <https://github.com/marcanuy>`_)
+- Marco Sirabella
 - Mark Davidoff
 - Martin Bachwerk
 - Marty Alchin
 - Matheus Cansian (`mscansian <https://github.com/mscansian>`_)
+- Matthew Somerville (`dracos <https://github.com/dracos>`_)
 - Mauricio de Abreu Antunes
 - Maxim Zemskov (`MaximZemskov <https://github.com/MaximZemskov>`_)
 - Micah Denbraver
 - Michael England
 - Miguel Vargas
 - Mike Spainhower
+- Muneeb Shahid (`muneeb706 <https://github.com/muneeb706>`_)
 - Nathan Villagaray-Carski (`ncvc <https://github.com/ncvc>`_)
 - Nianpeng Li
 - Nick Träger
+- Noel James (`NoelJames <https://github.com/NoelJames>`_)
+- Ofek Lev (`ofek <https://github.com/ofek>`_)
 - Phillip Marshall
 - Prakash Venkatraman (`dopatraman <https://github.com/dopatraman>`_)
 - Rajesh Pappula
@@ -107,7 +130,9 @@ Authors
 - Stefan Borer (`sbor23 <https://github.com/sbor23>`_)
 - Steven Buss (`sbuss <https://github.com/sbuss>`_)
 - Steven Klass
+- Thijs Kramer (`thijskramer <https://github.com/thijskramer>`_)
 - Tim Schilling (`tim-schilling <https://github.com/tim-schilling>`_)
+- Todd Wolfson (`twolfson <https://github.com/twolfson>`_)
 - Tommy Beadle (`tbeadle <https://github.com/tbeadle>`_)
 - Trey Hunner (`treyhunner <https://github.com/treyhunner>`_)
 - Ulysses Vilela
@@ -119,6 +144,9 @@ Authors
 - Shi Han Ng (`shihanng <https://github.com/shihanng>`_)
 - `ddusi <https://github.com/ddusi>`_
 - `DanialErfanian <https://github.com/DanialErfanian>`_
+- `Sridhar Marella <https://github.com/sridhar562345>`_
+- `Mattia Fantoni <https://github.com/MattFanto>`_
+- `Trent Holliday <https://github.com/trumpet2012>`_
 
 Background
 ==========

@@ -98,16 +98,75 @@ This will change the ``poll`` instance to have the data from the
 as_of
 -----
 
-This method will return an instance of the model as it would have existed at
-the provided date and time.
+The HistoryManager allows you to query a point in time for the latest historical
+records or instances.  When called on an instance's history manager, the ``as_of``
+method will return the instance from the specified point in time, if the instance
+existed at that time, or raise DoesNotExist.  When called on a model's history
+manager, the ``as_of`` method will return instances from a specific date and time
+that you specify, returning a queryset that you can use to further filter the result.
 
 .. code-block:: pycon
 
-    >>> from datetime import datetime
-    >>> poll.history.as_of(datetime(2010, 10, 25, 18, 4, 0))
-    <Poll: Poll object as of 2010-10-25 18:03:29.855689>
-    >>> poll.history.as_of(datetime(2010, 10, 25, 18, 5, 0))
-    <Poll: Poll object as of 2010-10-25 18:04:13.814128>
+    >>> t0 = datetime.now()
+    >>> document1 = RankedDocument.objects.create(rank=42)
+    >>> document2 = RankedDocument.objects.create(rank=84)
+    >>> t1 = datetime.now()
+
+    >>> RankedDocument.history.as_of(t1)
+    <HistoricalQuerySet [
+        <RankedDocument: RankedDocument object (1)>,
+        <RankedDocument: RankedDocument object (2)>
+    ]>
+
+    >>> RankedDocument.history.as_of(t1).filter(rank__lte=50)
+    <HistoricalQuerySet [
+        <RankedDocument: RankedDocument object (1)>
+    ]>
+
+``as_of`` is a convenience: the following two queries are identical.
+
+.. code-block:: pycon
+
+    RankedDocument.history.as_of(t1)
+    RankedDocument.history.filter(history_date__lte=t1).latest_of_each().as_instances()
+
+If you filter by `pk` the behavior depends on whether the queryset is
+returning instances or historical records.  When the queryset is returning
+instances, `pk` is mapped to the original model's primary key field.
+When the queryset is returning historical records, `pk` refers to the
+`history_id` primary key.
+
+
+is_historic and to_historic
+---------------------------
+
+If you use `as_of` to query history, the resulting instance will have an
+attribute named `_history` added to it.  This property will contain the
+historical model record that the instance was derived from.  Calling
+is_historic is an easy way to check if an instance was derived from a
+historic point in time (even if it is the most recent version).
+
+You can use `to_historic` to return the historical model that was used
+to furnish the instance at hand, if it is actually historic.
+
+.. _`HistoricForeignKey`:
+
+HistoricForeignKey
+------------------
+
+If you have two historic tables linked by foreign key, you can change it
+to use a HistoricForeignKey so that chasing relations from an `as_of`
+acquired instance (at a specific point in time) will honor that point in time
+when accessing the related object(s).  This works for both forward and
+reverse relationships.
+
+See the `HistoricForeignKeyTest` code and models for an example.
+
+
+HistoricOneToOneField
+---------------------
+
+Similar to :ref:`HistoricForeignKey`, but for OneToOneFields instead.
 
 most_recent
 -----------
@@ -122,30 +181,50 @@ model history.
     <Poll: Poll object as of 2010-10-25 18:04:13.814128>
 
 
-Save without a historical record
---------------------------------
+Save without creating historical records
+----------------------------------------
 
-If you want to save a model without a historical record, you can use the following:
+If you want to save model objects without triggering the creation of any historical
+records, you can do the following:
 
 .. code-block:: python
 
-    class Poll(models.Model):
-        question = models.CharField(max_length=200)
-        history = HistoricalRecords()
+    poll.skip_history_when_saving = True
+    poll.save()
+    # We recommend deleting the attribute afterward
+    del poll.skip_history_when_saving
 
-        def save_without_historical_record(self, *args, **kwargs):
-            self.skip_history_when_saving = True
-            try:
-                ret = self.save(*args, **kwargs)
-            finally:
-                del self.skip_history_when_saving
-            return ret
+This also works when creating an object, but only when calling ``save()``:
 
+.. code-block:: python
 
-    poll = Poll(question='something')
-    poll.save_without_historical_record()
+    # Note that `Poll.objects.create()` is not called
+    poll = Poll(question="Why?")
+    poll.skip_history_when_saving = True
+    poll.save()
+    del poll.skip_history_when_saving
 
-Or disable history records for all models by putting following lines in your ``settings.py`` file:
+.. note::
+    Historical records will always be created when calling the ``create()`` manager method.
+
+Alternatively, call the ``save_without_historical_record()`` method on each object
+instead of ``save()``.
+This method is automatically added to a model when registering it for history-tracking
+(i.e. defining a ``HistoricalRecords``  manager field on the model),
+and it looks like this:
+
+.. code-block:: python
+
+    def save_without_historical_record(self, *args, **kwargs):
+        self.skip_history_when_saving = True
+        try:
+            ret = self.save(*args, **kwargs)
+        finally:
+            del self.skip_history_when_saving
+        return ret
+
+Or disable the creation of historical records for *all* models
+by adding the following line to your settings:
 
 .. code-block:: python
 
@@ -166,7 +245,7 @@ To filter changes to the data, a relationship to the history can be established.
 
     Poll.objects.filter(history__history_user=4)
 
-You can also prefetch the objects with this relationship using somthing like this for example to prefetch order by history_date descending:
+You can also prefetch the objects with this relationship using something like this for example to prefetch order by history_date descending:
 
 .. code-block:: python
 
